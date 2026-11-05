@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A wall screen with a house on it. Adaptive icon: 108dp canvas, content inside the middle 66dp. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#E9EDF5"
+        android:strokeWidth="3"
+        android:pathData="M36,32h36a4,4 0 0 1 4,4v36a4,4 0 0 1 -4,4h-36a4,4 0 0 1 -4,-4v-36a4,4 0 0 1 4,-4z" />
+    <path
+        android:fillColor="#FFB547"
+        android:pathData="M54,41l-12,10v13h8v-8h8v8h8v-13z" />
+</vector>
