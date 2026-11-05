@@ -2,7 +2,7 @@
 
 A tiny Android app that turns a wall panel into one fullscreen web page, made for Home Assistant dashboards on the Sonoff NSPanel Pro (Android 8.1) and similar wall screens.
 
-It is a lighter alternative to a full kiosk browser: one activity, one system WebView, no settings screen, no libraries. The APK is about 32 KB.
+It is a lighter alternative to a full kiosk browser: one activity, one system WebView, no settings screen, no libraries. The APK is about 33 KB.
 
 ## What it does
 
@@ -43,6 +43,7 @@ Other extras:
 | `--es name <name>` | The panel's name in Home Assistant, e.g. `"Bedroom screen"` |
 | `--es mqtt <host[:port]>` | Report the sensors to this MQTT broker (port 1883 by default); `""` stops |
 | `--es mqtt_user <user>` / `--es mqtt_password <password>` | The broker login |
+| `--es near_above <value>` | Proximity above this means something is in front (for raw sensors like the NSPanel Pro's; `20` there is about 25 cm). Unset: the Android way, near = below the sensor's range |
 
 ## Sensors in Home Assistant
 
@@ -60,6 +61,9 @@ Home Assistant's MQTT integration finds a device with that name and two sensors:
 |---|---|
 | `sensor.<name>_light` | Light level in lux as Android reports it, at most every 5 seconds |
 | `sensor.<name>_proximity` | Proximity, averaged over one second, sent when it moves by 2 or more |
+| `binary_sensor.<name>_near` | Something in front of the screen (see `near_above`) |
+
+Only the sensors the panel has are created.
 
 Both turn unavailable when the app stops (MQTT last will). The values are retained, so Home Assistant has them again after a restart.
 
@@ -84,6 +88,7 @@ If another kiosk app also starts at boot, turn that off or disable it, so the tw
 | `haScreen.light()` | Light level in lux as Android reports it, or `NaN` |
 | `haScreen.proximity()` | Proximity, averaged over the last second, or `NaN` without a sensor |
 | `haScreen.proximityRange()` | The sensor's reported maximum |
+| `haScreen.near()` | Something in front of the screen (see `near_above`) |
 | `haScreen.setBrightness(level)` | Backlight 0–255 while the app shows; `-1` hands it back to the system |
 | `haScreen.info()` | JSON: app version, device model, Android version |
 
@@ -91,7 +96,7 @@ Changes also arrive as events, so the page doesn't need to poll:
 
 ```js
 addEventListener("ha-screen-sensor", (event) => {
-  const { type, value } = event.detail; // type: "light" | "proximity"
+  const { type, value } = event.detail; // type: "light" | "proximity" | "near" (1 or 0)
 });
 ```
 
@@ -106,7 +111,7 @@ On the NSPanel Pro, both sensors report raw values rather than calibrated ones:
 - Proximity reads about 10–15 with nothing in front, and its reported maximum (9) is below that.
 - Light reads in the thousands indoors.
 
-Watch the values for a while before deciding what "near" or "dark" means on your panel.
+Watch the values for a while before deciding what "near" or "dark" means on your panel. On ours, proximity above 20 meant something within about 25 cm (`--es near_above 20`), and light went from 20 000+ in daylight to 60–150 with the blinds closed.
 
 ## License
 

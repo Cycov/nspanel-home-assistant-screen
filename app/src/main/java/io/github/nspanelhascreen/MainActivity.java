@@ -32,6 +32,7 @@ public class MainActivity extends Activity {
     private static final String KEY_MQTT = "mqtt";
     private static final String KEY_MQTT_USER = "mqtt_user";
     private static final String KEY_MQTT_PASSWORD = "mqtt_password";
+    private static final String KEY_NEAR_ABOVE = "near_above";
     private static final String EXTRA_URL = "url"; //< --es url http://...: show this page from now on
     private static final String EXTRA_DEBUG = "debug"; //< --ez debug true: allow Chrome DevTools on the page
     private static final String EXTRA_RELOAD = "reload"; //< --ez reload true: load the page again
@@ -39,6 +40,7 @@ public class MainActivity extends Activity {
     private static final String EXTRA_MQTT = "mqtt"; //< --es mqtt host[:port]: report the sensors there ("" = stop)
     private static final String EXTRA_MQTT_USER = "mqtt_user";
     private static final String EXTRA_MQTT_PASSWORD = "mqtt_password";
+    private static final String EXTRA_NEAR_ABOVE = "near_above"; //< --es near_above 20: proximity above this = something in front
     private static final int MQTT_PORT = 1883;
     private static final String SETUP_PAGE = "file:///android_asset/setup.html";
     private static final long RETRY_MS = 10_000; //< page didn't load (Wi-Fi or Home Assistant down): try again after this
@@ -57,6 +59,7 @@ public class MainActivity extends Activity {
     private ScreenBridge bridge;
     private HaSensors sensors; //< null without MQTT settings
     private boolean sensorsChanged;
+    private boolean nearChanged;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -76,6 +79,7 @@ public class MainActivity extends Activity {
         setIntent(intent);
         boolean reload = applyIntent(intent);
         if (sensorsChanged) restartSensors();
+        if (nearChanged) bridge.setNearAbove(nearAbove());
         if (reload) {
             WebView.setWebContentsDebuggingEnabled(prefs().getBoolean(KEY_DEBUG, false));
             loadPage();
@@ -97,6 +101,7 @@ public class MainActivity extends Activity {
             changed = true;
         }
         sensorsChanged = false;
+        nearChanged = false;
         String[][] sensorExtras = {
                 {EXTRA_NAME, KEY_NAME}, {EXTRA_MQTT, KEY_MQTT}, {EXTRA_MQTT_USER, KEY_MQTT_USER}, {EXTRA_MQTT_PASSWORD, KEY_MQTT_PASSWORD},
         };
@@ -105,6 +110,11 @@ public class MainActivity extends Activity {
             String value = intent.getStringExtra(extra[0]);
             editor.putString(extra[1], value == null ? "" : value);
             sensorsChanged = true;
+        }
+        if (intent.hasExtra(EXTRA_NEAR_ABOVE)) {
+            String threshold = intent.getStringExtra(EXTRA_NEAR_ABOVE);
+            editor.putString(KEY_NEAR_ABOVE, threshold == null ? "" : threshold);
+            nearChanged = true;
         }
         editor.commit(); //< the sensors read these right after
         return changed || intent.getBooleanExtra(EXTRA_RELOAD, false);
@@ -131,9 +141,18 @@ public class MainActivity extends Activity {
                 // keep the default port
             }
         }
-        sensors = new HaSensors(host, port, prefs.getString(KEY_MQTT_USER, ""), prefs.getString(KEY_MQTT_PASSWORD, ""),
+        sensors = new HaSensors(this, host, port, prefs.getString(KEY_MQTT_USER, ""), prefs.getString(KEY_MQTT_PASSWORD, ""),
                 name, ScreenBridge.version(this));
         sensors.start();
+    }
+
+    /** NaN when not set: the bridge then uses the Android meaning of near. */
+    private float nearAbove() {
+        try {
+            return Float.parseFloat(prefs().getString(KEY_NEAR_ABOVE, ""));
+        } catch (NumberFormatException unset) {
+            return Float.NaN;
+        }
     }
 
     private void restartSensors() {
@@ -152,6 +171,7 @@ public class MainActivity extends Activity {
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new PageClient());
         bridge = new ScreenBridge(this, web, sensors);
+        bridge.setNearAbove(nearAbove());
         web.addJavascriptInterface(bridge, ScreenBridge.NAME);
         setContentView(web);
     }

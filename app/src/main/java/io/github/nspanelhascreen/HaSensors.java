@@ -1,5 +1,8 @@
 package io.github.nspanelhascreen;
 
+import android.content.Context;
+import android.hardware.Sensor;
+import android.hardware.SensorManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,9 +15,9 @@ import org.json.JSONObject;
 import java.util.Locale;
 
 /**
- * The panel's light and proximity sensors in Home Assistant, over MQTT with discovery: one device named
- * after the screen ("Bedroom screen" → sensor.bedroom_screen_light, sensor.bedroom_screen_proximity),
- * unavailable while the app is off.
+ * The panel's sensors in Home Assistant, over MQTT with discovery: one device named after the screen
+ * ("Bedroom screen" → sensor.bedroom_screen_light, sensor.bedroom_screen_proximity,
+ * binary_sensor.bedroom_screen_near), only those the panel has, unavailable while the app is off.
  */
 final class HaSensors implements ScreenBridge.Listener {
     private static final String DISCOVERY_PREFIX = "homeassistant";
@@ -32,15 +35,23 @@ final class HaSensors implements ScreenBridge.Listener {
     private long lightSentAt;
     private boolean lightQueued;
 
-    HaSensors(String host, int port, String user, String password, String name, String appVersion) {
+    HaSensors(Context context, String host, int port, String user, String password, String name, String appVersion) {
         id = slug(name);
         base = TOPIC_ROOT + "/" + id;
         mqtt = new MqttLink(host, port, TOPIC_ROOT + "-" + id, user, password, base + "/status", OFFLINE);
+        SensorManager sensors = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
         JSONObject device = device(name, appVersion);
-        mqtt.publish(configTopic("light"), config("Light", "light", device)
-                .put("unit_of_measurement", "lx").put("device_class", "illuminance").toString());
-        mqtt.publish(configTopic("proximity"), config("Proximity", "proximity", device)
-                .put("icon", "mdi:hand-wave-outline").toString());
+        if (sensors.getDefaultSensor(Sensor.TYPE_LIGHT) != null) {
+            mqtt.publish(configTopic("sensor", "light"), config("Light", "light", device)
+                    .put("unit_of_measurement", "lx").put("device_class", "illuminance")
+                    .put("state_class", "measurement").toString());
+        }
+        if (sensors.getDefaultSensor(Sensor.TYPE_PROXIMITY) != null) {
+            mqtt.publish(configTopic("sensor", "proximity"), config("Proximity", "proximity", device)
+                    .put("icon", "mdi:hand-wave-outline").put("state_class", "measurement").toString());
+            mqtt.publish(configTopic("binary_sensor", "near"), config("Near", "near", device)
+                    .put("device_class", "occupancy").toString());
+        }
         mqtt.publish(base + "/status", ONLINE);
     }
 
@@ -57,6 +68,8 @@ final class HaSensors implements ScreenBridge.Listener {
     public void onReading(String type, float value) {
         if ("proximity".equals(type)) {
             mqtt.publish(base + "/proximity", String.format(Locale.ROOT, "%.1f", value));
+        } else if ("near".equals(type)) {
+            mqtt.publish(base + "/near", value > 0 ? "ON" : "OFF");
         } else if ("light".equals(type)) {
             pendingLight = value;
             if (lightQueued) return;
@@ -72,8 +85,8 @@ final class HaSensors implements ScreenBridge.Listener {
         mqtt.publish(base + "/light", String.valueOf(Math.round(pendingLight)));
     }
 
-    private String configTopic(String sensor) {
-        return DISCOVERY_PREFIX + "/sensor/" + id + "/" + sensor + "/config";
+    private String configTopic(String component, String sensor) {
+        return DISCOVERY_PREFIX + "/" + component + "/" + id + "/" + sensor + "/config";
     }
 
     private Config config(String name, String sensor, JSONObject device) {
@@ -82,7 +95,6 @@ final class HaSensors implements ScreenBridge.Listener {
                 .put("unique_id", TOPIC_ROOT + "_" + id + "_" + sensor)
                 .put("state_topic", base + "/" + sensor)
                 .put("availability_topic", base + "/status")
-                .put("state_class", "measurement")
                 .put("device", device);
     }
 

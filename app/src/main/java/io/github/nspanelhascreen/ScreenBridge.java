@@ -19,7 +19,7 @@ import java.util.Locale;
 /**
  * What the page can reach as {@code window.haScreen}: the light and proximity sensors and the backlight.
  * Sensor changes also arrive as {@code ha-screen-sensor} events on {@code window},
- * with {@code detail = {type: "light" | "proximity", value}}.
+ * with {@code detail = {type: "light" | "proximity" | "near", value}} (near: 1 or 0).
  * Proximity is averaged over a second first: some panels (NSPanel Pro) report a raw, jittery value many times a second.
  */
 final class ScreenBridge implements SensorEventListener {
@@ -31,6 +31,9 @@ final class ScreenBridge implements SensorEventListener {
     private static final long PROXIMITY_WINDOW_MS = 1_000; //< proximity readings are averaged over this
     private static final float PROXIMITY_STEP = 2f; //< an average closer than this to the last one sent isn't sent
     private static final int BRIGHTNESS_MAX = 255;
+    private static final int NEAR_UNKNOWN = -1;
+    private static final int FAR = 0;
+    private static final int NEAR = 1;
 
     /** Gets every reading the page gets (Home Assistant over MQTT). */
     interface Listener {
@@ -52,6 +55,10 @@ final class ScreenBridge implements SensorEventListener {
     private boolean listening;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable proximityWindow = this::closeProximityWindow;
+    private final Runnable lateLight = this::sendLateLight;
+    private boolean lightQueued;
+    private float nearAbove = Float.NaN; //< NaN: near = below the sensor's range (the Android way)
+    private int near = NEAR_UNKNOWN;
     private Listener listener;
 
     /** listener may be null. */
@@ -70,6 +77,23 @@ final class ScreenBridge implements SensorEventListener {
         if (listener == null) return;
         if (!Float.isNaN(light)) listener.onReading("light", light);
         if (!Float.isNaN(proximity)) listener.onReading("proximity", proximity);
+        if (near != NEAR_UNKNOWN) listener.onReading("near", near);
+    }
+
+    /**
+     * Proximity readings above this mean something is in front: for sensors that report a raw
+     * value growing as things come closer (NSPanel Pro). NaN: the Android way, near = below the range.
+     */
+    void setNearAbove(float threshold) {
+        nearAbove = threshold;
+    }
+
+    boolean hasLight() {
+        return lightSensor != null;
+    }
+
+    boolean hasProximity() {
+        return proximitySensor != null;
     }
 
     void start() {
@@ -87,6 +111,8 @@ final class ScreenBridge implements SensorEventListener {
         listening = false;
         sensors.unregisterListener(this);
         handler.removeCallbacks(proximityWindow);
+        handler.removeCallbacks(lateLight);
+        lightQueued = false;
     }
 
     @Override
@@ -94,18 +120,34 @@ final class ScreenBridge implements SensorEventListener {
         float value = event.values[0];
         if (event.sensor.getType() == Sensor.TYPE_LIGHT) {
             light = value;
-            long now = SystemClock.elapsedRealtime();
-            boolean bigChange = Float.isNaN(sentLight)
-                    || Math.abs(value - sentLight) >= Math.max(LIGHT_MIN_LUX, sentLight * LIGHT_CHANGE);
-            if (!bigChange || now - sentLightAt < LIGHT_MIN_INTERVAL_MS) return;
-            sentLight = value;
-            sentLightAt = now;
-            send("light", value);
+            if (!lightChanged() || lightQueued) return;
+            long wait = sentLightAt + LIGHT_MIN_INTERVAL_MS - SystemClock.elapsedRealtime();
+            if (wait <= 0) {
+                sendLight();
+                return;
+            }
+            lightQueued = true; //< too soon: the latest value goes out once the interval is over
+            handler.postDelayed(lateLight, wait);
         } else if (event.sensor.getType() == Sensor.TYPE_PROXIMITY) {
             proximitySum += value;
             proximityCount++;
             if (Float.isNaN(proximity)) proximity = value; //< something to read before the first average
         }
+    }
+
+    private boolean lightChanged() {
+        return Float.isNaN(sentLight) || Math.abs(light - sentLight) >= Math.max(LIGHT_MIN_LUX, sentLight * LIGHT_CHANGE);
+    }
+
+    private void sendLight() {
+        sentLight = light;
+        sentLightAt = SystemClock.elapsedRealtime();
+        send("light", light);
+    }
+
+    private void sendLateLight() {
+        lightQueued = false;
+        if (lightChanged()) sendLight();
     }
 
     /** Every second: the average of the readings since; a steady sensor keeps its last value. */
@@ -118,6 +160,14 @@ final class ScreenBridge implements SensorEventListener {
         if (!Float.isNaN(proximity) && (Float.isNaN(sentProximity) || Math.abs(proximity - sentProximity) >= PROXIMITY_STEP)) {
             sentProximity = proximity;
             send("proximity", proximity);
+        }
+        if (!Float.isNaN(proximity)) {
+            boolean something = Float.isNaN(nearAbove) ? proximity < proximitySensor.getMaximumRange() : proximity > nearAbove;
+            int nowNear = something ? NEAR : FAR;
+            if (nowNear != near) {
+                near = nowNear;
+                send("near", nowNear);
+            }
         }
         if (listening) handler.postDelayed(proximityWindow, PROXIMITY_WINDOW_MS);
     }
@@ -143,6 +193,12 @@ final class ScreenBridge implements SensorEventListener {
     @JavascriptInterface
     public double proximity() {
         return proximity;
+    }
+
+    /** Something in front of the screen (see setNearAbove). */
+    @JavascriptInterface
+    public boolean near() {
+        return near == NEAR;
     }
 
     /** The proximity sensor's maximum: a reading below it means something is near. NaN without one. */
