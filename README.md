@@ -2,14 +2,15 @@
 
 A tiny Android app that turns a wall panel into one fullscreen web page, made for Home Assistant dashboards on the Sonoff NSPanel Pro (Android 8.1) and similar wall screens.
 
-It is a lighter alternative to a full kiosk browser: one activity, one system WebView, no settings screen, no libraries. The APK is about 27 KB.
+It is a lighter alternative to a full kiosk browser: one activity, one system WebView, no settings screen, no libraries. The APK is about 32 KB.
 
 ## What it does
 
 - Shows one page fullscreen (status and navigation bars hidden) and keeps the screen on.
 - Starts when the device boots, comes back if it crashes, retries when the page can't load (Wi-Fi or Home Assistant down), and rebuilds the page if the WebView's renderer dies.
 - Plays audio and video without a tap first, such as a doorbell chime or a camera stream with sound.
-- Gives the page the panel's light and proximity sensors and control of the backlight, through `window.haScreen`.
+- Reports the panel's light and proximity sensors to Home Assistant over MQTT, as a device found by MQTT discovery.
+- Gives the page the same sensors and control of the backlight, through `window.haScreen`.
 
 It does not replace the launcher, and the back button does nothing.
 
@@ -39,6 +40,30 @@ Other extras:
 | `--es url <address>` | Show this page from now on |
 | `--ez reload true` | Load the page again |
 | `--ez debug true` | Allow Chrome DevTools on the page (`chrome://inspect`, or `adb forward` to `webview_devtools_remote_<pid>`) |
+| `--es name <name>` | The panel's name in Home Assistant, e.g. `"Bedroom screen"` |
+| `--es mqtt <host[:port]>` | Report the sensors to this MQTT broker (port 1883 by default); `""` stops |
+| `--es mqtt_user <user>` / `--es mqtt_password <password>` | The broker login |
+
+## Sensors in Home Assistant
+
+Give the panel a name and an MQTT broker:
+
+```sh
+adb shell am start -n io.github.nspanelhascreen/.MainActivity --es name "'Bedroom screen'"   --es mqtt homeassistant.local --es mqtt_user <user> --es mqtt_password <password>
+```
+
+(The inner quotes keep a name with spaces in one piece through `adb shell`.)
+
+Home Assistant's MQTT integration finds a device with that name and two sensors:
+
+| Entity | Value |
+|---|---|
+| `sensor.<name>_light` | Light level in lux as Android reports it, at most every 5 seconds |
+| `sensor.<name>_proximity` | Proximity, averaged over one second, sent when it moves by 2 or more |
+
+Both turn unavailable when the app stops (MQTT last will). The values are retained, so Home Assistant has them again after a restart.
+
+With the Mosquitto broker app, a Home Assistant user can log in to MQTT; a dedicated user for the panels is best.
 
 ### Starting at boot on Android 10 and newer
 
@@ -72,7 +97,7 @@ addEventListener("ha-screen-sensor", (event) => {
 
 Light is sent when it changes by 10% (and at least 2 lx), at most once a second. Proximity is averaged over one second and sent when the average moves by 2 or more.
 
-To get the readings into Home Assistant, the page can fire an event over its websocket connection (`fire_event`) and an automation can turn it into sensors.
+For Home Assistant, the MQTT sensors above are simpler than relaying the readings from the page: a dashboard's user usually isn't an admin, and only admins may fire events.
 
 ### About the NSPanel Pro's sensors
 

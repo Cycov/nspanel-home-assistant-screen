@@ -32,6 +32,11 @@ final class ScreenBridge implements SensorEventListener {
     private static final float PROXIMITY_STEP = 2f; //< an average closer than this to the last one sent isn't sent
     private static final int BRIGHTNESS_MAX = 255;
 
+    /** Gets every reading the page gets (Home Assistant over MQTT). */
+    interface Listener {
+        void onReading(String type, float value);
+    }
+
     private final Activity activity;
     private final WebView web;
     private final SensorManager sensors;
@@ -47,13 +52,24 @@ final class ScreenBridge implements SensorEventListener {
     private boolean listening;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable proximityWindow = this::closeProximityWindow;
+    private Listener listener;
 
-    ScreenBridge(Activity activity, WebView web) {
+    /** listener may be null. */
+    ScreenBridge(Activity activity, WebView web, Listener listener) {
         this.activity = activity;
         this.web = web;
+        this.listener = listener;
         sensors = (SensorManager) activity.getSystemService(Context.SENSOR_SERVICE);
         lightSensor = sensors.getDefaultSensor(Sensor.TYPE_LIGHT);
         proximitySensor = sensors.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+    }
+
+    /** Also hands the new listener the readings so far. */
+    void setListener(Listener listener) {
+        this.listener = listener;
+        if (listener == null) return;
+        if (!Float.isNaN(light)) listener.onReading("light", light);
+        if (!Float.isNaN(proximity)) listener.onReading("proximity", proximity);
     }
 
     void start() {
@@ -111,6 +127,7 @@ final class ScreenBridge implements SensorEventListener {
     }
 
     private void send(String type, float value) {
+        if (listener != null) listener.onReading(type, value);
         String script = String.format(Locale.ROOT,
                 "window.dispatchEvent(new CustomEvent('%s',{detail:{type:'%s',value:%s}}))", EVENT, type, value);
         activity.runOnUiThread(() -> web.evaluateJavascript(script, null));
@@ -154,6 +171,10 @@ final class ScreenBridge implements SensorEventListener {
     }
 
     private String version() {
+        return version(activity);
+    }
+
+    static String version(Activity activity) {
         try {
             return activity.getPackageManager().getPackageInfo(activity.getPackageName(), 0).versionName;
         } catch (Exception error) {

@@ -28,9 +28,18 @@ public class MainActivity extends Activity {
     private static final String PREFS = "screen";
     private static final String KEY_URL = "url";
     private static final String KEY_DEBUG = "debug";
+    private static final String KEY_NAME = "name";
+    private static final String KEY_MQTT = "mqtt";
+    private static final String KEY_MQTT_USER = "mqtt_user";
+    private static final String KEY_MQTT_PASSWORD = "mqtt_password";
     private static final String EXTRA_URL = "url"; //< --es url http://...: show this page from now on
     private static final String EXTRA_DEBUG = "debug"; //< --ez debug true: allow Chrome DevTools on the page
     private static final String EXTRA_RELOAD = "reload"; //< --ez reload true: load the page again
+    private static final String EXTRA_NAME = "name"; //< --es name "Bedroom screen": the device in Home Assistant
+    private static final String EXTRA_MQTT = "mqtt"; //< --es mqtt host[:port]: report the sensors there ("" = stop)
+    private static final String EXTRA_MQTT_USER = "mqtt_user";
+    private static final String EXTRA_MQTT_PASSWORD = "mqtt_password";
+    private static final int MQTT_PORT = 1883;
     private static final String SETUP_PAGE = "file:///android_asset/setup.html";
     private static final long RETRY_MS = 10_000; //< page didn't load (Wi-Fi or Home Assistant down): try again after this
     private static final long RESTART_AFTER_CRASH_MS = 3_000;
@@ -46,6 +55,8 @@ public class MainActivity extends Activity {
     private final Runnable retry = this::loadPage;
     private WebView web;
     private ScreenBridge bridge;
+    private HaSensors sensors; //< null without MQTT settings
+    private boolean sensorsChanged;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,6 +65,7 @@ public class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         applyIntent(getIntent());
         WebView.setWebContentsDebuggingEnabled(prefs().getBoolean(KEY_DEBUG, false));
+        startSensors();
         createWebView();
         loadPage();
     }
@@ -62,7 +74,9 @@ public class MainActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        if (applyIntent(intent)) {
+        boolean reload = applyIntent(intent);
+        if (sensorsChanged) restartSensors();
+        if (reload) {
             WebView.setWebContentsDebuggingEnabled(prefs().getBoolean(KEY_DEBUG, false));
             loadPage();
         }
@@ -82,12 +96,51 @@ public class MainActivity extends Activity {
             editor.putBoolean(KEY_DEBUG, intent.getBooleanExtra(EXTRA_DEBUG, false));
             changed = true;
         }
-        editor.apply();
+        sensorsChanged = false;
+        String[][] sensorExtras = {
+                {EXTRA_NAME, KEY_NAME}, {EXTRA_MQTT, KEY_MQTT}, {EXTRA_MQTT_USER, KEY_MQTT_USER}, {EXTRA_MQTT_PASSWORD, KEY_MQTT_PASSWORD},
+        };
+        for (String[] extra : sensorExtras) {
+            if (!intent.hasExtra(extra[0])) continue;
+            String value = intent.getStringExtra(extra[0]);
+            editor.putString(extra[1], value == null ? "" : value);
+            sensorsChanged = true;
+        }
+        editor.commit(); //< the sensors read these right after
         return changed || intent.getBooleanExtra(EXTRA_RELOAD, false);
     }
 
     private SharedPreferences prefs() {
         return getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    /** Reports the light and proximity sensors over MQTT, when a broker and a name are set. */
+    private void startSensors() {
+        SharedPreferences prefs = prefs();
+        String broker = prefs.getString(KEY_MQTT, "");
+        String name = prefs.getString(KEY_NAME, "");
+        if (broker.isEmpty() || HaSensors.slug(name).isEmpty()) return;
+        String host = broker;
+        int port = MQTT_PORT;
+        int colon = broker.lastIndexOf(':');
+        if (colon > 0) {
+            host = broker.substring(0, colon);
+            try {
+                port = Integer.parseInt(broker.substring(colon + 1));
+            } catch (NumberFormatException ignored) {
+                // keep the default port
+            }
+        }
+        sensors = new HaSensors(host, port, prefs.getString(KEY_MQTT_USER, ""), prefs.getString(KEY_MQTT_PASSWORD, ""),
+                name, ScreenBridge.version(this));
+        sensors.start();
+    }
+
+    private void restartSensors() {
+        if (sensors != null) sensors.stop();
+        sensors = null;
+        startSensors();
+        bridge.setListener(sensors);
     }
 
     private void createWebView() {
@@ -98,7 +151,7 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false); //< doorbell chime and camera sound without a tap first
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new PageClient());
-        bridge = new ScreenBridge(this, web);
+        bridge = new ScreenBridge(this, web, sensors);
         web.addJavascriptInterface(bridge, ScreenBridge.NAME);
         setContentView(web);
     }
@@ -144,6 +197,7 @@ public class MainActivity extends Activity {
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
         bridge.stop();
+        if (sensors != null) sensors.stop();
         web.destroy();
         super.onDestroy();
     }
