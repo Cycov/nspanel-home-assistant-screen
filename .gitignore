@@ -6,3 +6,8 @@ local.properties
 .DS_Store
 captures/
 .kotlin/
+release/
+*.jks
+*.p12
+*.keystore
+keystore.properties

@@ -3,13 +3,16 @@ package io.github.nspanelhascreen;
 import android.app.Activity;
 import android.app.AlarmManager;
 import android.app.PendingIntent;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.webkit.RenderProcessGoneDetail;
@@ -22,9 +25,12 @@ import android.webkit.WebViewClient;
 
 /**
  * One fullscreen web page, kept on screen: the page set with
- * {@code adb shell am start -n io.github.nspanelhascreen/.MainActivity --es url <address>}.
+ * {@code adb shell am start -n io.github.nspanelhascreen/.Setup --es url <address>}.
+ * Settings only count when they come through the {@code .Setup} alias, which only adb's shell may open.
  */
 public class MainActivity extends Activity {
+    private static final String TAG = "HaScreen";
+    private static final String SETUP_ALIAS = ".Setup"; //< see AndroidManifest.xml
     private static final String PREFS = "screen";
     private static final String KEY_URL = "url";
     private static final String KEY_DEBUG = "debug";
@@ -86,22 +92,26 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Saves what adb passed; true when the page should load again. */
+    /** Saves what adb passed through .Setup; true when the page should load again. */
     private boolean applyIntent(Intent intent) {
-        if (intent == null) return false;
+        sensorsChanged = false;
+        nearChanged = false;
+        if (intent == null || !fromSetup(intent)) return false;
         SharedPreferences.Editor editor = prefs().edit();
         boolean changed = false;
         String url = intent.getStringExtra(EXTRA_URL);
         if (url != null && !url.isEmpty()) {
-            editor.putString(KEY_URL, url);
-            changed = true;
+            if (isWebAddress(url)) {
+                editor.putString(KEY_URL, url);
+                changed = true;
+            } else {
+                Log.w(TAG, "Ignored url: only http:// and https:// pages can be shown");
+            }
         }
         if (intent.hasExtra(EXTRA_DEBUG)) {
             editor.putBoolean(KEY_DEBUG, intent.getBooleanExtra(EXTRA_DEBUG, false));
             changed = true;
         }
-        sensorsChanged = false;
-        nearChanged = false;
         String[][] sensorExtras = {
                 {EXTRA_NAME, KEY_NAME}, {EXTRA_MQTT, KEY_MQTT}, {EXTRA_MQTT_USER, KEY_MQTT_USER}, {EXTRA_MQTT_PASSWORD, KEY_MQTT_PASSWORD},
         };
@@ -118,6 +128,17 @@ public class MainActivity extends Activity {
         }
         editor.commit(); //< the sensors read these right after
         return changed || intent.getBooleanExtra(EXTRA_RELOAD, false);
+    }
+
+    /** Opened through the .Setup alias (adb), not the launcher or another app. */
+    private boolean fromSetup(Intent intent) {
+        ComponentName component = intent.getComponent();
+        return component != null && component.getClassName().equals(getPackageName() + SETUP_ALIAS);
+    }
+
+    private static boolean isWebAddress(String url) {
+        String scheme = Uri.parse(url).getScheme();
+        return "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
     }
 
     private SharedPreferences prefs() {
@@ -167,6 +188,8 @@ public class MainActivity extends Activity {
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(false); //< no device files for the page (the bundled setup page is an asset, still allowed)
+        settings.setAllowContentAccess(false);
         settings.setMediaPlaybackRequiresUserGesture(false); //< doorbell chime and camera sound without a tap first
         web.setWebChromeClient(new WebChromeClient());
         web.setWebViewClient(new PageClient());

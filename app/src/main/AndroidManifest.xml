@@ -24,6 +24,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Settings (page, MQTT broker and login, debugging) are only taken through this entry point. Only adb's
+             shell and the system hold DUMP, so other apps on the device can't redirect the screen or the sensors. -->
+        <activity-alias
+            android:name=".Setup"
+            android:exported="true"
+            android:permission="android.permission.DUMP"
+            android:targetActivity=".MainActivity" />
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
