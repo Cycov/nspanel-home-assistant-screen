@@ -19,8 +19,8 @@ android {
         applicationId = "io.github.nspanelhascreen"
         minSdk = 26 // NSPanel Pro runs Android 8.1 (27)
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
     }
 
     signingConfigs {

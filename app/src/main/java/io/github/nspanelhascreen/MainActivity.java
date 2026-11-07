@@ -39,6 +39,7 @@ public class MainActivity extends Activity {
     private static final String KEY_MQTT_USER = "mqtt_user";
     private static final String KEY_MQTT_PASSWORD = "mqtt_password";
     private static final String KEY_NEAR_ABOVE = "near_above";
+    private static final String KEY_WIRELESS_ADB = "wireless_adb";
     private static final String EXTRA_URL = "url"; //< --es url http://...: show this page from now on
     private static final String EXTRA_DEBUG = "debug"; //< --ez debug true: allow Chrome DevTools on the page
     private static final String EXTRA_RELOAD = "reload"; //< --ez reload true: load the page again
@@ -47,6 +48,7 @@ public class MainActivity extends Activity {
     private static final String EXTRA_MQTT_USER = "mqtt_user";
     private static final String EXTRA_MQTT_PASSWORD = "mqtt_password";
     private static final String EXTRA_NEAR_ABOVE = "near_above"; //< --es near_above 20: proximity above this = something in front
+    private static final String EXTRA_WIRELESS_ADB = "wireless_adb"; //< --ez wireless_adb true: keep wireless debugging on (Android 11+)
     private static final int MQTT_PORT = 1883;
     private static final String SETUP_PAGE = "file:///android_asset/setup.html";
     private static final long RETRY_MS = 10_000; //< page didn't load (Wi-Fi or Home Assistant down): try again after this
@@ -66,6 +68,8 @@ public class MainActivity extends Activity {
     private HaSensors sensors; //< null without MQTT settings
     private boolean sensorsChanged;
     private boolean nearChanged;
+    private boolean wirelessAdbChanged;
+    private WirelessAdb wirelessAdb;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,6 +79,8 @@ public class MainActivity extends Activity {
         applyIntent(getIntent());
         WebView.setWebContentsDebuggingEnabled(prefs().getBoolean(KEY_DEBUG, false));
         startSensors();
+        wirelessAdb = new WirelessAdb(this);
+        if (prefs().getBoolean(KEY_WIRELESS_ADB, false)) wirelessAdb.start();
         createWebView();
         loadPage();
     }
@@ -86,6 +92,10 @@ public class MainActivity extends Activity {
         boolean reload = applyIntent(intent);
         if (sensorsChanged) restartSensors();
         if (nearChanged) bridge.setNearAbove(nearAbove());
+        if (wirelessAdbChanged) {
+            wirelessAdb.stop();
+            if (prefs().getBoolean(KEY_WIRELESS_ADB, false)) wirelessAdb.start();
+        }
         if (reload) {
             WebView.setWebContentsDebuggingEnabled(prefs().getBoolean(KEY_DEBUG, false));
             loadPage();
@@ -96,6 +106,7 @@ public class MainActivity extends Activity {
     private boolean applyIntent(Intent intent) {
         sensorsChanged = false;
         nearChanged = false;
+        wirelessAdbChanged = false;
         if (intent == null || !fromSetup(intent)) return false;
         SharedPreferences.Editor editor = prefs().edit();
         boolean changed = false;
@@ -125,6 +136,10 @@ public class MainActivity extends Activity {
             String threshold = intent.getStringExtra(EXTRA_NEAR_ABOVE);
             editor.putString(KEY_NEAR_ABOVE, threshold == null ? "" : threshold);
             nearChanged = true;
+        }
+        if (intent.hasExtra(EXTRA_WIRELESS_ADB)) {
+            editor.putBoolean(KEY_WIRELESS_ADB, intent.getBooleanExtra(EXTRA_WIRELESS_ADB, false));
+            wirelessAdbChanged = true;
         }
         editor.commit(); //< the sensors read these right after
         return changed || intent.getBooleanExtra(EXTRA_RELOAD, false);
@@ -241,6 +256,7 @@ public class MainActivity extends Activity {
         handler.removeCallbacksAndMessages(null);
         bridge.stop();
         if (sensors != null) sensors.stop();
+        wirelessAdb.stop();
         web.destroy();
         super.onDestroy();
     }

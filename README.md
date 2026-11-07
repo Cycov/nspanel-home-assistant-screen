@@ -20,7 +20,7 @@ Download `nspanel-ha-screen-<version>.apk` from the [releases](../../releases) a
 
 ```sh
 adb connect <panel-ip>:5555            # the NSPanel Pro listens on 5555 once adb is enabled
-adb install -r nspanel-ha-screen-0.4.0.apk
+adb install -r nspanel-ha-screen-0.5.0.apk
 ```
 
 Each release lists the APK's SHA-256, so you can check the download (`sha256sum` on Linux or macOS, `certutil -hashfile <file> SHA256` on Windows).
@@ -45,6 +45,7 @@ Then log in to Home Assistant once on the panel; the WebView keeps the session.
 | `--es name <name>` | The panel's name in Home Assistant, e.g. `"Bedroom screen"` |
 | `--es mqtt <host[:port]>` | Report the sensors to this MQTT broker (port 1883 by default); `""` stops |
 | `--es mqtt_user <user>` / `--es mqtt_password <password>` | The broker login |
+| `--ez wireless_adb true` | Keep wireless debugging on (Android 11+), see [Staying reachable over adb](#staying-reachable-over-adb); `false` stops |
 | `--es near_above <value>` | Proximity above this means something is in front (for raw sensors like the NSPanel Pro's; `20` there is about 25 cm). Unset (`""`): the Android way, near = below the sensor's range |
 
 Several extras can go in one command. Extras sent to `.MainActivity` (the launcher entry) are ignored. See [Security](#security) for why.
@@ -62,6 +63,19 @@ adb shell appops set io.github.nspanelhascreen SYSTEM_ALERT_WINDOW allow
 Android 8 and 9 (the NSPanel Pro) need nothing.
 
 If another kiosk app also starts at boot, turn that off or disable it, so the two don't fight over the screen.
+
+### Staying reachable over adb
+
+Android 11+ turns wireless debugging off at every restart and whenever Wi-Fi drops, and picks a new port each time it is turned on, so a screen on the wall soon can't be reached without walking up to it. The app can switch it back on each time Wi-Fi connects. This needs a permission only adb can grant, plus the setting:
+
+```sh
+adb shell pm grant io.github.nspanelhascreen android.permission.WRITE_SECURE_SETTINGS
+adb shell am start -n io.github.nspanelhascreen/.Setup --ez wireless_adb true
+```
+
+The port still changes after a restart, but the screen announces it on the network. `tools/adb-reconnect.ps1 <screen-ip>` finds it (`adb mdns services`), connects, and moves adb to the fixed port 5555 (`adb tcpip 5555`), which then works until the next restart. Wireless debugging stays limited to the Wi-Fi networks you allowed it on and to computers you paired. Also turn on **Developer options → Disable adb authorization timeout**, so Android doesn't forget a paired computer after 7 days.
+
+The NSPanel Pro (Android 8.1) doesn't need any of this: once adb is on, it listens on 5555 for good.
 
 ## Sensors in Home Assistant
 
@@ -182,7 +196,8 @@ A wall panel is a shared, always-on device, so the app keeps what it trusts narr
   - Plain `http://` pages are allowed, because most Home Assistant installs are reached that way at home. The same applies to the dashboard and its login unless you use `https://`.
 - **The page bridge is small.** `window.haScreen` can read the light and proximity sensors and set the backlight, nothing else. It is there on any page the screen shows, including one reached by a link from your dashboard. A page elsewhere could at most read the light level or dim the screen.
 - **DevTools is off** until you turn it on with `--ez debug true`.
-- **Permissions:** internet, start at boot, and "draw over other apps" (only used so Android 10+ lets it start at boot).
+- **Wireless debugging is only kept on when you ask for it**, with both the `WRITE_SECURE_SETTINGS` grant (adb only) and `--ez wireless_adb true`. The app writes that one setting and nothing else with the permission. Anyone who can reach adb on the screen can do anything adb can, so only turn it on for screens on a network you trust.
+- **Permissions:** internet, network state (to notice Wi-Fi coming back), start at boot, "draw over other apps" (only used so Android 10+ lets it start at boot), and optionally `WRITE_SECURE_SETTINGS` (see above).
 
 ## About the NSPanel Pro's sensors
 
