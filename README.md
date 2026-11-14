@@ -10,7 +10,7 @@ It is a lighter alternative to a full kiosk browser: one activity, the system We
 - Starts when the device boots and comes back by itself if it crashes. It retries when the page can't load (Wi-Fi or Home Assistant down) and rebuilds the page if the WebView's renderer dies.
 - Plays audio and video without a tap first, such as a doorbell chime or a camera stream with sound.
 - Reports the panel's light and proximity sensors to Home Assistant over MQTT, as a device found by MQTT discovery.
-- Gives the page the same sensors and control of the backlight, through `window.haScreen`.
+- Gives the page the same sensors, the battery level and control of the backlight, through `window.haScreen`.
 
 It does not replace the launcher, and the back button does nothing.
 
@@ -20,7 +20,7 @@ Download `nspanel-ha-screen-<version>.apk` from the [releases](../../releases) a
 
 ```sh
 adb connect <panel-ip>:5555            # the NSPanel Pro listens on 5555 once adb is enabled
-adb install -r nspanel-ha-screen-0.5.0.apk
+adb install -r nspanel-ha-screen-0.6.0.apk
 ```
 
 Each release lists the APK's SHA-256, so you can check the download (`sha256sum` on Linux or macOS, `certutil -hashfile <file> SHA256` on Windows).
@@ -107,6 +107,8 @@ With the Mosquitto broker app, any Home Assistant user can log in to MQTT. A ded
 | `haScreen.proximity()` | Proximity, averaged over the last second, or `NaN` without a sensor |
 | `haScreen.proximityRange()` | The sensor's reported maximum |
 | `haScreen.near()` | Something in front of the screen (see `near_above`) |
+| `haScreen.battery()` | Battery charge in percent, or `NaN` without a battery (0.6.0+) |
+| `haScreen.charging()` | Plugged in: charger, USB or wireless (0.6.0+) |
 | `haScreen.setBrightness(level)` | Backlight 0–255 while the app shows; `-1` hands it back to the system |
 | `haScreen.info()` | JSON: app version, device model, Android version |
 
@@ -114,7 +116,7 @@ Changes also arrive as events, so the page doesn't need to poll:
 
 ```js
 addEventListener("ha-screen-sensor", (event) => {
-  const { type, value } = event.detail; // type: "light" | "proximity" | "near" (1 or 0)
+  const { type, value } = event.detail; // type: "light" | "proximity" | "near" (1 or 0) | "battery" (percent) | "charging" (1 or 0)
 });
 ```
 

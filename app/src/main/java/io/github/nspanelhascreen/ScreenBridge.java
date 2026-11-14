@@ -1,11 +1,15 @@
 package io.github.nspanelhascreen;
 
 import android.app.Activity;
+import android.content.BroadcastReceiver;
 import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -17,9 +21,9 @@ import android.webkit.WebView;
 import java.util.Locale;
 
 /**
- * What the page can reach as {@code window.haScreen}: the light and proximity sensors and the backlight.
- * Sensor changes also arrive as {@code ha-screen-sensor} events on {@code window},
- * with {@code detail = {type: "light" | "proximity" | "near", value}} (near: 1 or 0).
+ * What the page can reach as {@code window.haScreen}: the light and proximity sensors, the battery and the backlight.
+ * Changes also arrive as {@code ha-screen-sensor} events on {@code window},
+ * with {@code detail = {type: "light" | "proximity" | "near" | "battery" | "charging", value}} (near and charging: 1 or 0).
  * Proximity is averaged over a second first: some panels (NSPanel Pro) report a raw, jittery value many times a second.
  */
 final class ScreenBridge implements SensorEventListener {
@@ -34,6 +38,9 @@ final class ScreenBridge implements SensorEventListener {
     private static final int NEAR_UNKNOWN = -1;
     private static final int FAR = 0;
     private static final int NEAR = 1;
+    private static final int PERCENT = 100;
+    private static final int API_RECEIVER_FLAGS = 33; //< Android 13: registerReceiver takes an exported / not exported flag
+    private static final int RECEIVER_NOT_EXPORTED = 4; //< Context.RECEIVER_NOT_EXPORTED
 
     /** Gets every reading the page gets (Home Assistant over MQTT). */
     interface Listener {
@@ -60,6 +67,14 @@ final class ScreenBridge implements SensorEventListener {
     private float nearAbove = Float.NaN; //< NaN: near = below the sensor's range (the Android way)
     private int near = NEAR_UNKNOWN;
     private Listener listener;
+    private volatile float battery = Float.NaN; //< percent
+    private volatile boolean charging;
+    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            readBattery(intent);
+        }
+    };
 
     /** listener may be null. */
     ScreenBridge(Activity activity, WebView web, Listener listener) {
@@ -104,12 +119,17 @@ final class ScreenBridge implements SensorEventListener {
             sensors.registerListener(this, proximitySensor, SensorManager.SENSOR_DELAY_NORMAL);
             handler.postDelayed(proximityWindow, PROXIMITY_WINDOW_MS);
         }
+        // the battery state is a sticky broadcast: the current one arrives at once
+        IntentFilter batteryChanges = new IntentFilter(Intent.ACTION_BATTERY_CHANGED);
+        if (Build.VERSION.SDK_INT >= API_RECEIVER_FLAGS) activity.registerReceiver(batteryReceiver, batteryChanges, RECEIVER_NOT_EXPORTED);
+        else activity.registerReceiver(batteryReceiver, batteryChanges);
     }
 
     void stop() {
         if (!listening) return;
         listening = false;
         sensors.unregisterListener(this);
+        activity.unregisterReceiver(batteryReceiver);
         handler.removeCallbacks(proximityWindow);
         handler.removeCallbacks(lateLight);
         lightQueued = false;
@@ -172,6 +192,23 @@ final class ScreenBridge implements SensorEventListener {
         if (listening) handler.postDelayed(proximityWindow, PROXIMITY_WINDOW_MS);
     }
 
+    private void readBattery(Intent intent) {
+        int level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        boolean nowCharging = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+        if (level >= 0 && scale > 0) {
+            float percent = Math.round(level * PERCENT / (float) scale);
+            if (percent != battery) {
+                battery = percent;
+                send("battery", percent);
+            }
+        }
+        if (nowCharging != charging) {
+            charging = nowCharging;
+            send("charging", nowCharging ? 1 : 0);
+        }
+    }
+
     @Override
     public void onAccuracyChanged(Sensor sensor, int accuracy) {
     }
@@ -205,6 +242,18 @@ final class ScreenBridge implements SensorEventListener {
     @JavascriptInterface
     public double proximityRange() {
         return proximitySensor == null ? Double.NaN : proximitySensor.getMaximumRange();
+    }
+
+    /** Battery charge in percent, or NaN before the first reading / on a device without a battery. */
+    @JavascriptInterface
+    public double battery() {
+        return battery;
+    }
+
+    /** Plugged in (charger, USB or wireless), whether or not the battery is actually gaining charge. */
+    @JavascriptInterface
+    public boolean charging() {
+        return charging;
     }
 
     /** Backlight 0–255 while this screen shows; -1 hands it back to the system setting. */
