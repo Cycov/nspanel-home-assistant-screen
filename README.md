@@ -126,7 +126,7 @@ To get the readings into Home Assistant, use the MQTT sensors above rather than 
 
 ## How it works
 
-The app is five classes under `app/src/main/java/io/github/nspanelhascreen/`:
+The app is six classes under `app/src/main/java/io/github/nspanelhascreen/`:
 
 | File | Role |
 |---|---|
@@ -135,6 +135,7 @@ The app is five classes under `app/src/main/java/io/github/nspanelhascreen/`:
 | `HaSensors.java` | Home Assistant's side of the readings: MQTT discovery and state topics |
 | `MqttLink.java` | A minimal MQTT 3.1.1 client (about 300 lines, no library) |
 | `BootReceiver.java` | Opens the screen after the device boots |
+| `WirelessAdb.java` | Switches wireless debugging back on when Wi-Fi connects, if asked to (Android 11+) |
 
 ### The screen
 
@@ -196,7 +197,7 @@ A wall panel is a shared, always-on device, so the app keeps what it trusts narr
 - **Not encrypted on the network.**
   - MQTT goes over plain TCP; TLS isn't supported. The MQTT login and readings can be seen by anyone on the same network, so keep the broker on your local network and give the panels their own MQTT user.
   - Plain `http://` pages are allowed, because most Home Assistant installs are reached that way at home. The same applies to the dashboard and its login unless you use `https://`.
-- **The page bridge is small.** `window.haScreen` can read the light and proximity sensors and set the backlight, nothing else. It is there on any page the screen shows, including one reached by a link from your dashboard. A page elsewhere could at most read the light level or dim the screen.
+- **The page bridge is small.** `window.haScreen` can read the light and proximity sensors and the battery state, and set the backlight, nothing else. It is there on any page the screen shows, including one reached by a link from your dashboard. A page elsewhere could at most read those values or dim the screen.
 - **DevTools is off** until you turn it on with `--ez debug true`.
 - **Wireless debugging is only kept on when you ask for it**, with both the `WRITE_SECURE_SETTINGS` grant (adb only) and `--ez wireless_adb true`. The app writes that one setting and nothing else with the permission. Anyone who can reach adb on the screen can do anything adb can, so only turn it on for screens on a network you trust.
 - **Permissions:** internet, network state (to notice Wi-Fi coming back), start at boot, "draw over other apps" (only used so Android 10+ lets it start at boot), and optionally `WRITE_SECURE_SETTINGS` (see above).
